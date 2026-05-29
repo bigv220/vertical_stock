@@ -1,0 +1,19 @@
+[[positions]]
+code = "000001"
+name = "示例股票"
+quantity = 10000
+available_quantity = 6000
+cost_price = 9.5
+high_sell_ratio = 0.2
+low_buy_ratio = 0.2
+
+[strategy]
+high_sell_min_gain = 0.02
+high_sell_max_gain = 0.05
+min_vwap_premium = 0.01
+min_volume_ratio = 1.5
+low_buy_min_drop = 0.015
+low_buy_max_drop = 0.03
+max_market_drop = -0.01
+max_sector_drop = -0.015
+support_tolerance = 0.003
