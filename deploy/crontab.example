@@ -1,0 +1,9 @@
+# 方式一：cron 定时单次评估（轻量，无需常驻进程）
+# 交易时段每 2 分钟跑一次；脚本内部会再次校验交易时段与节假日休市（休市时行情不变不会误报）。
+# 安装：crontab -e 后粘贴下面一行（改成你的实际路径）。
+#
+# ┌── 分(每2分钟)  ┌── 时(9-15点)  ┌─日 ┌─月 ┌─周(1-5=周一到周五)
+*/2 9-15 * * 1-5 /opt/vertical_stock/deploy/run.sh run >> /opt/vertical_stock/bot.log 2>&1
+
+# 收盘后推送一次当日网格态势总览（可选）：每个交易日 15:05
+5 15 * * 1-5 /opt/vertical_stock/deploy/run.sh status --notify >> /opt/vertical_stock/bot.log 2>&1

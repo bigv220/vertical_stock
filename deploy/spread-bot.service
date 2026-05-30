@@ -1,0 +1,22 @@
+# systemd 守护：常驻 loop 模式（推荐用于火山引擎 ECS）
+# 安装：
+#   sudo cp deploy/spread-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now spread-bot
+#   journalctl -u spread-bot -f      # 查看日志
+[Unit]
+Description=A股高抛低吸做价差飞书通知机器人
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 改成你的实际部署路径与运行用户
+WorkingDirectory=/opt/vertical_stock
+ExecStart=/usr/bin/python3 /opt/vertical_stock/main.py loop --config /opt/vertical_stock/config.yaml
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/vertical_stock/bot.log
+StandardError=append:/opt/vertical_stock/bot.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+# 仅依赖 PyYAML，其余均用 Python 标准库（urllib/json/hmac…），部署极简
+PyYAML>=5.4

@@ -1,0 +1,52 @@
+# ============ 飞书做价差通知机器人 · 配置模板 ============
+# 复制为 config.yaml 后按需修改：cp config.example.yaml config.yaml
+
+# 飞书自定义机器人 webhook（群设置 → 群机器人 → 添加机器人 → 自定义机器人）
+webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/你的机器人ID"
+
+# 若机器人开启了「加签」安全设置，填入密钥；否则留空
+feishu_secret: ""
+
+# 行情数据源：tencent（默认，字段全）| sina（备用）。主源失败会自动回退
+data_source: "tencent"
+
+# loop 常驻模式的轮询间隔（秒）。震荡做价差一般 30~60s 足够
+poll_interval_seconds: 60
+
+# 是否仅在 A股交易时段（09:30-11:30 / 13:00-15:00 工作日）运行
+only_trading_hours: true
+
+# 运行状态文件（记录网格档位，避免重复推送）。相对路径相对本配置文件解析
+state_file: "state.json"
+
+# ------------------- 监控标的 -------------------
+# 每只股票一组配置。字段说明：
+#   code           必填，6 位代码（沪/深/北自动识别）
+#   name           可选，留空自动取行情名称
+#   cost           可选，持仓成本，仅用于展示「距成本/浮亏」
+#   base_price     网格基准价。显式填写=立即按此锚点评估；留空=以昨收自动锚定（首次只记录不触发）
+#   grid_step_pct  每格价差百分比，越小越灵敏、信号越多
+#   trade_shares   每格建议交易股数（A股 100 股 = 1 手）
+#   upper_limit_pct 网格上限（相对基准价 %），超出停止高抛（留空不限制）
+#   lower_limit_pct 网格下限（相对基准价 %），触及停止低吸（留空不限制）
+#   trend_alert_grids 连续同向 N 格触发「单边行情」预警，默认 3
+stocks:
+  - code: "300763"
+    name: "锦浪科技"
+    cost: 130.0
+    base_price: null      # 留空：以昨收为基准自动锚定
+    grid_step_pct: 3.0
+    trade_shares: 200
+    upper_limit_pct: 30
+    lower_limit_pct: -30
+    trend_alert_grids: 3
+
+  - code: "300450"
+    name: "先导智能"
+    cost: 60.0
+    base_price: null
+    grid_step_pct: 3.0
+    trade_shares: 300
+    upper_limit_pct: 30
+    lower_limit_pct: -30
+    trend_alert_grids: 3
