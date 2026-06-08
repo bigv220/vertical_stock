@@ -97,27 +97,45 @@ def build_signal_card(items: List[Tuple[Signal, Quote, StockConfig]]) -> Tuple[s
         template = "green"
     else:
         template = "orange"
-    title = f"📊 高抛低吸提醒 · {len(items)} 条信号"
+    has_confluence = any(sig.strategy == "confluence" for sig, _, _ in items)
+    title = f"📊 {'共振策略' if has_confluence else '高抛低吸'}提醒 · {len(items)} 条信号"
 
     elements: list = [_note(f"做价差信号 · {_now()}")]
     for sig, q, cfg in items:
         icon = "🔴 高抛" if sig.action == Action.SELL else "🟢 低吸"
         verb = "卖出" if sig.action == Action.SELL else "买入"
-        block = (
-            f"**{icon} | {sig.name}（{sig.code}）**\n"
-            f"　现价 **{sig.price:.2f}**（较昨收 {q.change_pct:+.2f}%）\n"
-            f"　建议{verb} **{sig.shares}** 股 ≈ **{sig.price * sig.shares:,.0f}** 元"
-            f"（{sig.grids} 格 × {cfg.trade_shares} 股）\n"
-            f"　网格：基准 {sig.base_price:.2f}｜每格 {sig.grid_step_pct:.1f}%"
-            f"（{sig.step:.2f} 元）｜第 {sig.level_from:+d} → {sig.level_to:+d} 格\n"
-            f"{_cost_line(cfg, sig.price)}"
-            f"　下一高抛 **{sig.next_sell:.2f}**　下一低吸 **{sig.next_buy:.2f}**"
-        )
+        if sig.strategy == "confluence":
+            reason_lines = "\n".join(f"　- {r}" for r in sig.confluence_reasons)
+            extra = []
+            if sig.vwap:
+                extra.append(f"VWAP {sig.vwap:.2f}")
+            if sig.reference_level:
+                extra.append(f"参考位 {sig.reference_level:.2f}")
+            block = (
+                f"**{icon} | {sig.name}（{sig.code}）**\n"
+                f"　现价 **{sig.price:.2f}**（较昨收 {q.change_pct:+.2f}%）\n"
+                f"　建议{verb} **{sig.shares}** 股 ≈ **{sig.price * sig.shares:,.0f}** 元\n"
+                f"　共振评分 **{sig.confluence_score}/4**"
+                + (f"｜{'｜'.join(extra)}" if extra else "") + "\n"
+                f"{_cost_line(cfg, sig.price)}"
+                f"{reason_lines}"
+            )
+        else:
+            block = (
+                f"**{icon} | {sig.name}（{sig.code}）**\n"
+                f"　现价 **{sig.price:.2f}**（较昨收 {q.change_pct:+.2f}%）\n"
+                f"　建议{verb} **{sig.shares}** 股 ≈ **{sig.price * sig.shares:,.0f}** 元"
+                f"（{sig.grids} 格 × {cfg.trade_shares} 股）\n"
+                f"　网格：基准 {sig.base_price:.2f}｜每格 {sig.grid_step_pct:.1f}%"
+                f"（{sig.step:.2f} 元）｜第 {sig.level_from:+d} → {sig.level_to:+d} 格\n"
+                f"{_cost_line(cfg, sig.price)}"
+                f"　下一高抛 **{sig.next_sell:.2f}**　下一低吸 **{sig.next_buy:.2f}**"
+            )
         elements.append(_md(block))
         if sig.note:
             elements.append(_note(sig.note))
         elements.append(_hr())
-    elements.append(_note("⚠️ 本提醒为量化网格信号，非投资建议；单边行情请人工研判，注意控制风险。"))
+    elements.append(_note("⚠️ 本提醒为量化策略信号，非投资建议；共振只提高胜率，不保证方向，注意仓位与止损。"))
     return title, template, elements
 
 

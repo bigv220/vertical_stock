@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import urllib.request
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -38,6 +39,25 @@ class Quote:
         if self.prev_close <= 0:
             return 0.0
         return (self.price - self.prev_close) / self.prev_close * 100.0
+
+
+@dataclass
+class MinuteBar:
+    """分时数据点（腾讯财经三文件格式）。"""
+    time: str          # HHMM 或 HH:MM
+    price: float       # 该分钟收盘价
+    avg_price: float   # 该分钟均价
+    volume: float      # 该分钟成交量（手）
+    amount: float      # 该分钟成交额（元）
+
+    @property
+    def vwap(self) -> Optional[float]:
+        """当日累计 VWAP 近似值。"""
+        if self.avg_price > 0:
+            return self.avg_price
+        if self.volume > 0 and self.amount > 0:
+            return self.amount / (self.volume * 100)
+        return None
 
 
 def _http_get(url: str, headers: Optional[dict] = None) -> str:
@@ -121,6 +141,39 @@ def fetch_sina(codes: List[str]) -> Dict[str, Quote]:
             continue
         out[q.code] = q
     return out
+
+
+def fetch_minute_bars(code: str) -> List[MinuteBar]:
+    """拉取腾讯当日分时线，用于趋势线、支阻与 VWAP 共振判断。"""
+    try:
+        raw = _http_get(f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={secu_id(code)}")
+        payload = json.loads(raw)
+        node = payload.get("data", {}).get(secu_id(code), {}).get("data", {})
+        rows = node.get("data") or []
+    except Exception:
+        return []
+
+    bars: List[MinuteBar] = []
+    for row in rows:
+        if isinstance(row, str):
+            f = row.split()
+        elif isinstance(row, list):
+            f = [str(x) for x in row]
+        else:
+            continue
+        if len(f) < 2:
+            continue
+        try:
+            bars.append(MinuteBar(
+                time=f[0],
+                price=float(f[1]),
+                avg_price=float(f[2]) if len(f) > 2 and f[2] else 0.0,
+                volume=float(f[3]) if len(f) > 3 and f[3] else 0.0,
+                amount=float(f[4]) if len(f) > 4 and f[4] else 0.0,
+            ))
+        except ValueError:
+            continue
+    return bars
 
 
 def fetch_quotes(codes: List[str], source: str = "tencent") -> Dict[str, Quote]:

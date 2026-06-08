@@ -18,6 +18,16 @@ class StockConfig:
     upper_limit_pct: Optional[float] = None  # 网格上限（相对基准价 %），超出停止高抛
     lower_limit_pct: Optional[float] = None  # 网格下限（相对基准价 %），触及停止低吸
     trend_alert_grids: int = 3             # 连续同向 N 格触发单边市场预警
+    strategy: str = "grid"                  # grid | confluence
+    confluence_lookback: int = 120          # 共振策略使用的分时点数
+    confluence_min_bars: int = 30           # 最少分时点数，不足则不触发
+    confluence_min_score: int = 3           # 四要素中至少满足几项才触发
+    confluence_cooldown_minutes: int = 30   # 同股信号冷却时间
+    retracement_min_pct: float = 38.2       # 回撤/反抽下限
+    retracement_max_pct: float = 61.8       # 回撤/反抽上限
+    trendline_tolerance_pct: float = 1.0    # 趋势线附近容忍偏差
+    sr_tolerance_pct: float = 1.0           # 支阻互换附近容忍偏差
+    vwap_tolerance_pct: float = 0.5         # VWAP 附近容忍偏差
 
 
 @dataclass
@@ -57,6 +67,16 @@ def load_config(path: str) -> AppConfig:
                 upper_limit_pct=_opt_float(item.get("upper_limit_pct")),
                 lower_limit_pct=_opt_float(item.get("lower_limit_pct")),
                 trend_alert_grids=int(item.get("trend_alert_grids", 3)),
+                strategy=str(item.get("strategy", "grid")).strip().lower(),
+                confluence_lookback=int(item.get("confluence_lookback", 120)),
+                confluence_min_bars=int(item.get("confluence_min_bars", 30)),
+                confluence_min_score=int(item.get("confluence_min_score", 3)),
+                confluence_cooldown_minutes=int(item.get("confluence_cooldown_minutes", 30)),
+                retracement_min_pct=float(item.get("retracement_min_pct", 38.2)),
+                retracement_max_pct=float(item.get("retracement_max_pct", 61.8)),
+                trendline_tolerance_pct=float(item.get("trendline_tolerance_pct", 1.0)),
+                sr_tolerance_pct=float(item.get("sr_tolerance_pct", 1.0)),
+                vwap_tolerance_pct=float(item.get("vwap_tolerance_pct", 0.5)),
             )
         )
     if not stocks:

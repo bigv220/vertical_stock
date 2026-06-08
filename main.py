@@ -22,6 +22,7 @@ import sys
 import time
 
 from spread_bot.config import load_config
+from spread_bot.confluence import evaluate_confluence
 from spread_bot.market import is_trading_time
 from spread_bot.notifier import (
     FeishuNotifier,
@@ -29,7 +30,7 @@ from spread_bot.notifier import (
     build_status_card,
     is_ok,
 )
-from spread_bot.quotes import fetch_quotes
+from spread_bot.quotes import fetch_minute_bars, fetch_quotes
 from spread_bot.state import load_state, save_state
 from spread_bot.strategy import evaluate, grid_status
 
@@ -66,11 +67,18 @@ def cmd_run(app, args) -> int:
         if not cfg.name:
             cfg.name = q.name
         st = state.setdefault(cfg.code, {})
-        signal, st = evaluate(cfg, q, st)
+        if cfg.strategy == "confluence":
+            bars = fetch_minute_bars(cfg.code)
+            if not bars:
+                log(f"未获取到分时线：{cfg.code}（{cfg.name}），跳过共振策略。")
+            signal, st = evaluate_confluence(cfg, q, st, bars)
+        else:
+            signal, st = evaluate(cfg, q, st)
         state[cfg.code] = st
         if signal:
             items.append((signal, q, cfg))
-            log(f"信号 ▶ {signal.action.value} {cfg.name} 现价{q.price} 建议{signal.shares}股"
+            label = "共振" if signal.strategy == "confluence" else "网格"
+            log(f"信号 ▶ [{label}] {signal.action.value} {cfg.name} 现价{q.price} 建议{signal.shares}股"
                 + (f"｜{signal.note}" if signal.note else ""))
         else:
             log(f"无信号　 {cfg.name or cfg.code} 现价{q.price}（{q.change_pct:+.2f}%）")

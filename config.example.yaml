@@ -30,23 +30,45 @@ state_file: "state.json"
 #   upper_limit_pct 网格上限（相对基准价 %），超出停止高抛（留空不限制）
 #   lower_limit_pct 网格下限（相对基准价 %），触及停止低吸（留空不限制）
 #   trend_alert_grids 连续同向 N 格触发「单边行情」预警，默认 3
-stocks:
-  - code: "300763"
-    name: "锦浪科技"
-    cost: 130.0
-    base_price: null      # 留空：以昨收为基准自动锚定
-    grid_step_pct: 3.0
-    trade_shares: 200
-    upper_limit_pct: 30
-    lower_limit_pct: -30
-    trend_alert_grids: 3
+#   strategy       策略类型：grid（默认网格）| confluence（回撤+趋势线+支阻互换+VWAP 共振）
+#   confluence_min_score 共振策略至少满足几项条件才触发，默认 3（满分 4）
+# 共振策略默认参数：四项（回撤/趋势线/支阻互换/VWAP）满足 3 项提醒
+confluence_defaults: &confluence_defaults
+  cost: null
+  base_price: null
+  grid_step_pct: 3.0
+  trade_shares: 100
+  upper_limit_pct: 30
+  lower_limit_pct: -30
+  trend_alert_grids: 3
+  strategy: "confluence"
+  confluence_lookback: 120       # 最近 120 个分时点画线/找支阻
+  confluence_min_bars: 30        # 分时点不足则跳过
+  confluence_min_score: 3        # 回撤、趋势线、支阻互换、VWAP 至少满足 3 项
+  confluence_cooldown_minutes: 30
+  retracement_min_pct: 38.2      # 回撤/反抽区间
+  retracement_max_pct: 61.8
+  trendline_tolerance_pct: 1.0   # 趋势线附近容忍偏差
+  sr_tolerance_pct: 1.0          # 支阻位附近容忍偏差
+  vwap_tolerance_pct: 0.5        # VWAP 附近容忍偏差
 
-  - code: "300450"
-    name: "先导智能"
-    cost: 60.0
-    base_price: null
-    grid_step_pct: 3.0
-    trade_shares: 300
-    upper_limit_pct: 30
-    lower_limit_pct: -30
-    trend_alert_grids: 3
+stocks:
+  - <<: *confluence_defaults
+    code: "301120"
+    name: ""
+
+  - <<: *confluence_defaults
+    code: "300450"
+    name: ""
+
+  - <<: *confluence_defaults
+    code: "300660"
+    name: ""
+
+  - <<: *confluence_defaults
+    code: "301408"
+    name: ""
+
+  - <<: *confluence_defaults
+    code: "301191"
+    name: ""

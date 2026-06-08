@@ -9,6 +9,10 @@
 
 ## 策略原理
 
+默认使用网格做价差；也可以把单只股票的 `strategy` 改为 `confluence`，启用 **Retracement + 趋势线（line chart）+ 支阻互换 + VWAP** 共振策略。
+
+### 网格策略
+
 以 **基准价（中枢）** 为中心，按固定百分比（每格 `grid_step_pct`）划分网格：
 
 ```
@@ -28,6 +32,17 @@
 
 **单边预警**：统计同向连续格数，连续 `trend_alert_grids`（默认 3）格同向时，在卡片中提示疑似单边行情。
 
+### 共振策略（Retracement + 趋势线 + 支阻互换 + VWAP）
+
+把某只股票配置为 `strategy: "confluence"` 后，程序会拉取腾讯当日分时线，并对最近 `confluence_lookback` 个分时点做四项判断：
+
+- **Retracement**：上涨后的回撤，或下跌后的反抽，落在 `retracement_min_pct` ~ `retracement_max_pct` 区间；
+- **趋势线**：用 line chart 的局部高/低点拟合下降压力线或上升支撑线，价格来到趋势线附近；
+- **支阻互换**：前压力突破后回踩成支撑，或前支撑跌破后反抽成压力；
+- **VWAP**：价格与当日均价/VWAP 的相对位置配合方向。
+
+默认至少满足 `confluence_min_score: 3` 项才推送，卡片会展示命中的共振理由。该策略仍只做提醒，不自动下单。
+
 ---
 
 ## 目录结构
@@ -39,8 +54,9 @@ vertical_stock/
 ├── requirements.txt        # 仅依赖 PyYAML
 ├── spread_bot/
 │   ├── config.py           # 配置加载与校验
-│   ├── quotes.py           # 实时行情（腾讯主 / 新浪备，自动回退）
+│   ├── quotes.py           # 实时行情与腾讯分时线（腾讯主 / 新浪备，自动回退）
 │   ├── strategy.py         # 网格做价差引擎（信号 / 回滞 / 单边预警）
+│   ├── confluence.py       # 回撤 + 趋势线 + 支阻互换 + VWAP 共振策略
 │   ├── state.py            # 运行状态持久化（原子写）
 │   ├── market.py           # 交易所推断 / 涨跌停 / 交易时段
 │   └── notifier.py         # 飞书交互卡片推送（支持加签）
@@ -106,6 +122,8 @@ stocks:
     upper_limit_pct: 30     # 网格上限（相对中枢%），超出提示停止高抛；留空不限
     lower_limit_pct: -30    # 网格下限（相对中枢%），触及提示停止低吸；留空不限
     trend_alert_grids: 3    # 连续同向 N 格触发单边预警
+    strategy: "grid"        # grid | confluence
+    confluence_min_score: 3 # confluence 下四项共振至少满足几项
 ```
 
 ### `base_price`（网格中枢）怎么填

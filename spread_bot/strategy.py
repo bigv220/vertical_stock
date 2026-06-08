@@ -12,9 +12,9 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .config import StockConfig
 from .quotes import Quote
@@ -44,6 +44,11 @@ class Signal:
     reversal: bool = False  # 是否方向反转（意味着完成一轮价差）
     out_of_range: bool = False
     note: str = ""
+    strategy: str = "grid"
+    confluence_score: int = 0
+    confluence_reasons: List[str] = field(default_factory=list)
+    vwap: Optional[float] = None
+    reference_level: Optional[float] = None
 
 
 @dataclass
