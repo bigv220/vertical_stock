@@ -73,11 +73,24 @@ class MinuteKline:
     source: str = "tencent"
 
 
-def _http_get(url: str, headers: Optional[dict] = None) -> str:
-    req = urllib.request.Request(url, headers={**_HEADERS, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-        # 两家接口均为 GBK 编码
-        return resp.read().decode("gbk", errors="ignore")
+def _http_get(url: str, headers: Optional[dict] = None, retries: int = 3) -> str:
+    """带重试的 HTTP GET。服务器内网 DNS 解析腾讯 CDN 偶发失败（gaierror/超时），
+    重试几次即可恢复；对实时行情/分时/K线三类抓取通用加固。"""
+    import socket
+    import time as _time
+    last_err: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={**_HEADERS, **(headers or {})})
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+                # 两家接口均为 GBK 编码
+                return resp.read().decode("gbk", errors="ignore")
+        except (socket.gaierror, urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            if attempt < retries - 1:
+                _time.sleep(0.6 * (attempt + 1))  # 短退避，DNS 抖动通常瞬时恢复
+    assert last_err is not None
+    raise last_err
 
 
 def fetch_tencent(codes: List[str]) -> Dict[str, Quote]:
@@ -248,11 +261,20 @@ def _parse_mkline_row(row, ohlc_index: dict) -> Optional[MinuteKline]:
             close=float(f[ohlc_index["close"]]),
             high=float(f[ohlc_index["high"]]),
             low=float(f[ohlc_index["low"]]),
-            volume=float(f[5]) if len(f) > 5 and f[5] else 0.0,
-            amount=float(f[6]) if len(f) > 6 and f[6] else 0.0,
+            volume=_safe_float(f[5]) if len(f) > 5 else 0.0,
+            amount=_safe_float(f[6]) if len(f) > 6 else 0.0,
         )
     except (ValueError, IndexError):
         return None
+
+
+def _safe_float(v) -> float:
+    """容错转 float：非数字（如腾讯行里的 '{}'）返回 0.0。"""
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return 0.0
+
 
 
 def fetch_minute_klines(code: str, n: int = 320) -> List[MinuteKline]:
@@ -263,8 +285,10 @@ def fetch_minute_klines(code: str, n: int = 320) -> List[MinuteKline]:
     """
     sid = secu_id(code)
     try:
+        # 注意：web.ifzq.gtimg.cn 的 mkline 会 301 重定向到 web3.ifzq.gtimg.cn，
+        # 后者在部分内网 DNS 下解析失败。直接用 ifzq.gtimg.cn（200，不重定向）。
         raw = _http_get(
-            f"https://web.ifzq.gtimg.cn/appstock/app/kline/mkline?param={sid},m1,,{n}"
+            f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={sid},m1,,{n}"
         )
         payload = json.loads(raw)
     except Exception:
