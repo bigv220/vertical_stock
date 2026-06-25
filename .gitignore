@@ -2,6 +2,12 @@
 config.yaml
 state.json
 *.log
+signals.db
+signals.db-wal
+signals.db-shm
+*.db
+*-wal
+*-shm
 
 # Python
 __pycache__/

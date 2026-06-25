@@ -49,6 +49,12 @@ class Signal:
     confluence_reasons: List[str] = field(default_factory=list)
     vwap: Optional[float] = None
     reference_level: Optional[float] = None
+    # 波动率/背离软过滤（网格用），均为展示用原始类型
+    suppressed: bool = False                       # 是否被背离压制（仅 confluence 硬压制用）
+    suppress_reasons: List[str] = field(default_factory=list)
+    vol_regime: Optional[str] = None               # 'high'|'normal'|'low'
+    divergence_tag: Optional[str] = None           # '顶背离'|'底背离'|None
+    share_scale: float = 1.0                       # 网格软缩放比例（展示用）
 
 
 @dataclass
@@ -78,8 +84,13 @@ def _init_state(cfg: StockConfig, q: Quote, st: Dict) -> bool:
     return False
 
 
-def evaluate(cfg: StockConfig, q: Quote, st: Dict) -> Tuple[Optional[Signal], Dict]:
-    """评估单只股票，返回（信号或 None，更新后的状态）。"""
+def evaluate(cfg: StockConfig, q: Quote, st: Dict,
+             vol_profile=None, divergence=None) -> Tuple[Optional[Signal], Dict]:
+    """评估单只股票，返回（信号或 None，更新后的状态）。
+
+    vol_profile/divergence 为可选的软过滤：背离反向或低波动时放缓建议股数 + 备注，
+    但不硬改 last_level（避免破坏网格档位不变量）。硬压制仅 confluence 策略使用。
+    """
     explicit_anchor = False
     if "last_level" not in st:
         explicit_anchor = _init_state(cfg, q, st)
@@ -154,13 +165,37 @@ def evaluate(cfg: StockConfig, q: Quote, st: Dict) -> Tuple[Optional[Signal], Di
     if reversal:
         st["round_trips"] = st.get("round_trips", 0) + 1
 
+    # —— 波动率/背离软过滤：放缓建议股数 + 备注，档位照常推进 ——
+    share_scale = 1.0
+    vol_regime = None
+    div_tag = None
+    if divergence is not None and getattr(divergence, "has_data", False) and not divergence.ambiguous:
+        if action == Action.SELL and divergence.bullish:
+            notes.append("⚠️ 底背离，高抛可放缓（建议减半）")
+            share_scale *= 0.5
+            div_tag = "底背离"
+        elif action == Action.BUY and divergence.bearish:
+            notes.append("⚠️ 顶背离，低吸可放缓（建议减半）")
+            share_scale *= 0.5
+            div_tag = "顶背离"
+    if vol_profile is not None and getattr(vol_profile, "has_data", False):
+        vol_regime = vol_profile.regime
+        if vol_profile.regime == "low":
+            notes.append("💤 低波动，价差空间小（建议减半）")
+            share_scale *= 0.5
+        elif vol_profile.regime == "high":
+            notes.append("🔥 高波动，价差机会大")
+
+    raw_shares = grids * cfg.trade_shares
+    shares = max(cfg.trade_shares, int(raw_shares * share_scale))
+
     signal = Signal(
         code=q.code,
         name=cfg.name or q.name,
         action=action,
         price=q.price,
         grids=grids,
-        shares=grids * cfg.trade_shares,
+        shares=shares,
         level_from=last,
         level_to=new_level,
         base_price=base,
@@ -172,6 +207,9 @@ def evaluate(cfg: StockConfig, q: Quote, st: Dict) -> Tuple[Optional[Signal], Di
         reversal=reversal,
         out_of_range=out_of_range,
         note="；".join(notes),
+        vol_regime=vol_regime,
+        divergence_tag=div_tag,
+        share_scale=share_scale,
     )
     return signal, st
 

@@ -60,6 +60,19 @@ class MinuteBar:
         return None
 
 
+@dataclass
+class MinuteKline:
+    """1 分钟 K 线（腾讯 mkline 接口，OHLC 齐全，用于 RSI/ATR/布林）。"""
+    ts: str            # 'YYYY-MM-DD HH:MM:00'（已规范化）
+    open: float
+    close: float
+    high: float
+    low: float
+    volume: float      # 该分钟成交量
+    amount: float      # 该分钟成交额（元）
+    source: str = "tencent"
+
+
 def _http_get(url: str, headers: Optional[dict] = None) -> str:
     req = urllib.request.Request(url, headers={**_HEADERS, **(headers or {})})
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
@@ -174,6 +187,137 @@ def fetch_minute_bars(code: str) -> List[MinuteBar]:
         except ValueError:
             continue
     return bars
+
+
+def _find_first_row_list(node) -> list:
+    """递归在响应节点里找首个「行列表」：元素为 list 或逗号分隔字符串、首项可解析为时间。"""
+    if isinstance(node, list):
+        if node and (isinstance(node[0], (list, str))):
+            first = node[0]
+            head = first[0] if isinstance(first, list) else (first.split(",")[0] if isinstance(first, str) else "")
+            if isinstance(head, str) and head[:4].isdigit():
+                return node
+        return []
+    if isinstance(node, dict):
+        for v in node.values():
+            found = _find_first_row_list(v)
+            if found:
+                return found
+    return []
+
+
+def _norm_ts(raw: str) -> Optional[str]:
+    """把腾讯各种时间格式统一为 'YYYY-MM-DD HH:MM:00'。
+
+    兼容：YYYYMMDDHHMM、YYYYMMDDHHMMSS、YYYY-MM-DD HH:MM(:SS)。
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    # 纯数字串：12 位（到分）或 14 位（到秒）
+    if s.isdigit():
+        if len(s) == 12:
+            return f"{s[:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}:00"
+        if len(s) == 14:
+            return f"{s[:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}:00"
+        return None
+    # 'YYYY-MM-DD HH:MM' 或 'YYYY-MM-DD HH:MM:SS'
+    if len(s) >= 16 and s[4] == "-" and s[7] == "-":
+        base = f"{s[:10]} {s[11:13]}:{s[14:16]}:00"
+        return base
+    return None
+
+
+def _parse_mkline_row(row, ohlc_index: dict) -> Optional[MinuteKline]:
+    """按已探测的字段下标解析一行 K 线。ohlc_index 给出 open/close/high/low 在行中的位置。"""
+    if isinstance(row, str):
+        f = row.split(",")
+    elif isinstance(row, list):
+        f = [str(x) for x in row]
+    else:
+        return None
+    if len(f) < max(ohlc_index.values()) + 1:
+        return None
+    try:
+        ts = _norm_ts(f[0])
+        if not ts:
+            return None
+        return MinuteKline(
+            ts=ts,
+            open=float(f[ohlc_index["open"]]),
+            close=float(f[ohlc_index["close"]]),
+            high=float(f[ohlc_index["high"]]),
+            low=float(f[ohlc_index["low"]]),
+            volume=float(f[5]) if len(f) > 5 and f[5] else 0.0,
+            amount=float(f[6]) if len(f) > 6 and f[6] else 0.0,
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def fetch_minute_klines(code: str, n: int = 320) -> List[MinuteKline]:
+    """拉取腾讯 1 分钟 K 线（OHLC），供 RSI/ATR/布林/背离计算。
+
+    字段顺序存在变体（open-close-high-low 或 open-high-low-close），先用不变量
+    `low<=open<=high 且 low<=close<=high` 探测正确顺序，再统一解析。
+    """
+    sid = secu_id(code)
+    try:
+        raw = _http_get(
+            f"https://web.ifzq.gtimg.cn/appstock/app/kline/mkline?param={sid},m1,,{n}"
+        )
+        payload = json.loads(raw)
+    except Exception:
+        return []
+
+    node = payload.get("data", {}).get(sid, {})
+    # 响应键路径多变：先试常见路径，再递归找首个「行的列表」兜底
+    rows: list = []
+    for path in (("mx", "m1"), ("m1",), ("qfqminute",), ("data", "m1")):
+        cur = node
+        ok = True
+        for key in path:
+            if isinstance(cur, dict) and key in cur:
+                cur = cur[key]
+            else:
+                ok = False
+                break
+        if ok and isinstance(cur, list) and cur:
+            rows = cur
+            break
+    if not rows:
+        rows = _find_first_row_list(node)
+    if not rows:
+        return []
+
+    # 探测字段顺序：默认 [time, open, close, high, low, ...]，
+    # 若不变量不满足则改用 [time, open, high, low, close, ...]
+    candidates = [
+        {"open": 1, "close": 2, "high": 3, "low": 4},
+        {"open": 1, "high": 2, "low": 3, "close": 4},
+    ]
+    idx = candidates[0]
+    sample = rows[: min(10, len(rows))]
+    for cand in candidates:
+        ok = True
+        for r in sample:
+            k = _parse_mkline_row(r, cand)
+            if not k:
+                continue
+            if not (k.low <= k.open + 1e-9 and k.low <= k.close + 1e-9
+                    and k.open <= k.high + 1e-9 and k.close <= k.high + 1e-9):
+                ok = False
+                break
+        if ok:
+            idx = cand
+            break
+
+    klines: List[MinuteKline] = []
+    for row in rows:
+        k = _parse_mkline_row(row, idx)
+        if k and k.low > 0:
+            klines.append(k)
+    return klines
 
 
 def fetch_quotes(codes: List[str], source: str = "tencent") -> Dict[str, Quote]:

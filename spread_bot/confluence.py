@@ -82,16 +82,40 @@ def _find_sell_flip(price: float, lows: Sequence[Pivot], values: Sequence[float]
     return None
 
 
+def _parse_time(raw: str) -> Optional[dt.datetime]:
+    """兼容腾讯行情时间的多种格式：YYYYMMDDHHMMSS / YYYY-MM-DD HH:MM:SS / YYYY-MM-DD HH:MM。"""
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.isdigit() and len(s) == 14:
+        return dt.datetime.strptime(s, "%Y%m%d%H%M%S")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def _cooling_down(cfg: StockConfig, q: Quote, st: Dict) -> bool:
     last_time = st.get("confluence_last_signal_time")
     if not last_time or cfg.confluence_cooldown_minutes <= 0:
         return False
-    try:
-        prev = dt.datetime.strptime(last_time[:19], "%Y-%m-%d %H:%M:%S")
-        cur = dt.datetime.strptime(q.time[:19], "%Y-%m-%d %H:%M:%S")
-    except ValueError:
+    prev = _parse_time(last_time)
+    cur = _parse_time(q.time)
+    if not prev or not cur:
         return False
     return (cur - prev).total_seconds() < cfg.confluence_cooldown_minutes * 60
+
+
+def _div_tag(divergence) -> Optional[str]:
+    if not divergence or not getattr(divergence, "has_data", False) or divergence.ambiguous:
+        return None
+    if divergence.bearish:
+        return "顶背离"
+    if divergence.bullish:
+        return "底背离"
+    return None
 
 
 def _build_signal(
@@ -103,11 +127,20 @@ def _build_signal(
     vwap: Optional[float],
     reference_level: Optional[float],
     st: Dict,
+    suppressed: bool = False,
+    suppress_reasons: Optional[List[str]] = None,
+    vol_profile=None,
+    divergence=None,
 ) -> Signal:
     direction = 1 if action == Action.SELL else -1
-    st["confluence_last_action"] = action.value
-    st["confluence_last_signal_time"] = q.time
-    st["confluence_signal_count"] = st.get("confluence_signal_count", 0) + 1
+    # 关键：压制信号不消耗冷却、不计数，否则下一 tick 不再评估
+    if not suppressed:
+        st["confluence_last_action"] = action.value
+        st["confluence_last_signal_time"] = q.time
+        st["confluence_signal_count"] = st.get("confluence_signal_count", 0) + 1
+    all_reasons = list(reasons)
+    if suppress_reasons:
+        all_reasons += list(suppress_reasons)
     return Signal(
         code=q.code,
         name=cfg.name or q.name,
@@ -123,12 +156,16 @@ def _build_signal(
         next_sell=q.price,
         next_buy=q.price,
         streak=0,
-        note="；".join(reasons),
+        note="；".join(all_reasons),
         strategy="confluence",
         confluence_score=score,
-        confluence_reasons=reasons,
+        confluence_reasons=all_reasons,
         vwap=vwap,
         reference_level=reference_level,
+        suppressed=suppressed,
+        suppress_reasons=suppress_reasons or [],
+        vol_regime=vol_profile.regime if vol_profile and getattr(vol_profile, "has_data", False) else None,
+        divergence_tag=_div_tag(divergence),
     )
 
 
@@ -137,8 +174,15 @@ def evaluate_confluence(
     q: Quote,
     st: Dict,
     bars: Optional[Sequence[MinuteBar]],
+    klines: Optional[Sequence[MinuteBar]] = None,
+    vol_profile=None,
+    divergence=None,
 ) -> Tuple[Optional[Signal], Dict]:
-    """评估共振策略，至少满足 min_score 个条件才触发。"""
+    """评估共振策略，至少满足 min_score 个条件才触发。
+
+    vol_profile/divergence 作为额外打分因子（高波动/背离加分）与过滤器
+    （低波动抬高门槛、背离反向压制信号）。满分 = 4 方向 + 波动 + 背离。
+    """
     if not bars or len(bars) < max(20, cfg.confluence_min_bars):
         return None, st
     if _cooling_down(cfg, q, st):
@@ -195,12 +239,44 @@ def evaluate_confluence(
     if vwap and price <= vwap * (1 + cfg.vwap_tolerance_pct / 100.0):
         sell_reasons.append(f"价格未有效站上 VWAP {vwap:.2f}")
 
+    # —— 波动率加分（方向中性，同时加买卖两侧，仅抬高达标概率）——
+    if vol_profile and cfg.enable_volatility and getattr(vol_profile, "has_data", False) and vol_profile.regime == "high":
+        buy_reasons.append("波动放大（BB宽/ATR高），价差机会大")
+        sell_reasons.append("波动放大（BB宽/ATR高），价差机会大")
+
+    # —— 背离加分（方向性）——
+    if divergence and cfg.enable_divergence and getattr(divergence, "has_data", False) and not divergence.ambiguous:
+        if divergence.bullish:
+            buy_reasons.append("底背离（RSI/量价）支撑低吸")
+        if divergence.bearish:
+            sell_reasons.append("顶背离（RSI/量价）警示高抛")
+
     buy_score = len(buy_reasons)
     sell_score = len(sell_reasons)
-    min_score = max(1, min(cfg.confluence_min_score, 4))
-    if buy_score < min_score and sell_score < min_score:
+    max_factors = 4 + (1 if cfg.enable_volatility else 0) + (1 if cfg.enable_divergence else 0)
+    eff_min = max(1, min(cfg.confluence_min_score, max_factors))
+    # 低波动降噪：抬高有效门槛，静默 return None（不产生 suppressed 信号）
+    if vol_profile and cfg.enable_volatility and getattr(vol_profile, "has_data", False) and vol_profile.regime == "low":
+        eff_min += cfg.vol_denoise_score_bump
+    if buy_score < eff_min and sell_score < eff_min:
         return None, st
 
-    if buy_score >= sell_score:
-        return _build_signal(cfg, q, Action.BUY, buy_score, buy_reasons, vwap, buy_ref, st), st
-    return _build_signal(cfg, q, Action.SELL, sell_score, sell_reasons, vwap, sell_ref, st), st
+    # —— 背离反向压制：信号仍返回（可见），但不消耗冷却 ——
+    action = Action.BUY if buy_score >= sell_score else Action.SELL
+    suppressed = False
+    suppress_reasons: List[str] = []
+    if cfg.divergence_suppress_opposite and divergence and getattr(divergence, "has_data", False) and not divergence.ambiguous:
+        if action == Action.BUY and divergence.bearish:
+            suppressed = True
+            suppress_reasons.append("顶背离压制低吸")
+        elif action == Action.SELL and divergence.bullish:
+            suppressed = True
+            suppress_reasons.append("底背离压制高抛")
+
+    if action == Action.BUY:
+        return _build_signal(cfg, q, Action.BUY, buy_score, buy_reasons, vwap, buy_ref, st,
+                             suppressed=suppressed, suppress_reasons=suppress_reasons,
+                             vol_profile=vol_profile, divergence=divergence), st
+    return _build_signal(cfg, q, Action.SELL, sell_score, sell_reasons, vwap, sell_ref, st,
+                         suppressed=suppressed, suppress_reasons=suppress_reasons,
+                         vol_profile=vol_profile, divergence=divergence), st

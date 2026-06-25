@@ -103,6 +103,8 @@ def build_signal_card(items: List[Tuple[Signal, Quote, StockConfig]]) -> Tuple[s
     elements: list = [_note(f"做价差信号 · {_now()}")]
     for sig, q, cfg in items:
         icon = "🔴 高抛" if sig.action == Action.SELL else "🟢 低吸"
+        if sig.suppressed:
+            icon = f"🚫（已压制）{icon}"
         verb = "卖出" if sig.action == Action.SELL else "买入"
         if sig.strategy == "confluence":
             reason_lines = "\n".join(f"　- {r}" for r in sig.confluence_reasons)
@@ -111,11 +113,15 @@ def build_signal_card(items: List[Tuple[Signal, Quote, StockConfig]]) -> Tuple[s
                 extra.append(f"VWAP {sig.vwap:.2f}")
             if sig.reference_level:
                 extra.append(f"参考位 {sig.reference_level:.2f}")
+            if sig.vol_regime:
+                extra.append(f"波动 {sig.vol_regime}")
+            if sig.divergence_tag:
+                extra.append(sig.divergence_tag)
             block = (
                 f"**{icon} | {sig.name}（{sig.code}）**\n"
                 f"　现价 **{sig.price:.2f}**（较昨收 {q.change_pct:+.2f}%）\n"
                 f"　建议{verb} **{sig.shares}** 股 ≈ **{sig.price * sig.shares:,.0f}** 元\n"
-                f"　共振评分 **{sig.confluence_score}/4**"
+                f"　共振评分 **{sig.confluence_score}**"
                 + (f"｜{'｜'.join(extra)}" if extra else "") + "\n"
                 f"{_cost_line(cfg, sig.price)}"
                 f"{reason_lines}"

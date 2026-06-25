@@ -31,8 +31,8 @@ state_file: "state.json"
 #   lower_limit_pct 网格下限（相对基准价 %），触及停止低吸（留空不限制）
 #   trend_alert_grids 连续同向 N 格触发「单边行情」预警，默认 3
 #   strategy       策略类型：grid（默认网格）| confluence（回撤+趋势线+支阻互换+VWAP 共振）
-#   confluence_min_score 共振策略至少满足几项条件才触发，默认 3（满分 4）
-# 共振策略默认参数：四项（回撤/趋势线/支阻互换/VWAP）满足 3 项提醒
+#   confluence_min_score 共振策略至少满足几项条件才触发，默认 4（满分 6）
+# 共振策略默认参数：四项方向（回撤/趋势线/支阻互换/VWAP）+ 波动 + 背离，满分 6，至少满足 4 项提醒
 confluence_defaults: &confluence_defaults
   cost: null
   base_price: null
@@ -44,13 +44,33 @@ confluence_defaults: &confluence_defaults
   strategy: "confluence"
   confluence_lookback: 120       # 最近 120 个分时点画线/找支阻
   confluence_min_bars: 30        # 分时点不足则跳过
-  confluence_min_score: 3        # 回撤、趋势线、支阻互换、VWAP 至少满足 3 项
+  confluence_min_score: 4        # 4项方向+波动+背离 至少满足 4 项（满分 6）
   confluence_cooldown_minutes: 30
   retracement_min_pct: 38.2      # 回撤/反抽区间
   retracement_max_pct: 61.8
   trendline_tolerance_pct: 1.0   # 趋势线附近容忍偏差
   sr_tolerance_pct: 1.0          # 支阻位附近容忍偏差
   vwap_tolerance_pct: 0.5        # VWAP 附近容忍偏差
+  # --- K线 / 历史存储 ---
+  kline_lookback: 320            # 拉取/参考的 1 分钟 K 线根数
+  # --- 波动率 ---
+  enable_volatility: true
+  vol_atr_period: 14
+  vol_bb_period: 20
+  vol_bb_std: 2.0
+  vol_hv_period: 60
+  vol_high_bb_width_pct: 1.5     # 布林带宽 ≥ 此 → 高波动（加分）；按板块调
+  vol_low_bb_width_pct: 0.5      # 布林带宽 ≤ 此 → 低波动，抬高触发门槛（降噪）
+  vol_denoise_score_bump: 1
+  # --- 背离 ---
+  enable_divergence: true
+  enable_rsi_divergence: true
+  enable_pv_divergence: true
+  divergence_rsi_period: 14
+  divergence_lookback: 120
+  divergence_pivot_window: 3
+  divergence_min_swing_pct: 0.3  # 波幅小于此 % 的 HH/LL 视为噪音
+  divergence_suppress_opposite: true  # 顶背离压制低吸 / 底背离压制高抛
 
 stocks:
   - <<: *confluence_defaults
